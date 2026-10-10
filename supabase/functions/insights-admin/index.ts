@@ -24,7 +24,7 @@ function domains(v:any){
  for(const d of list)if(!/^(\*\.)?([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/.test(d))throw new Error('"'+d+'" is not a website domain. Use the address without https://, e.g. example.co.uk');
  return [...new Set(list)].slice(0,20);
 }
-async function appUrl(){const {data}=await admin.from('ecommerce_system_secrets').select('secret_value').eq('secret_name','insights_app_url').maybeSingle();return String(data?.secret_value||'https://staff.racecargraphics.uk/insights').replace(/\/$/,'');}
+async function appUrl(){const {data}=await admin.from('ecommerce_system_secrets').select('secret_value').eq('secret_name','insights_app_url').maybeSingle();return String(data?.secret_value||'https://insights.racecargraphics.uk').replace(/\/$/,'');}
 
 async function who(req:Request){
  const token=(req.headers.get('authorization')||'').replace(/^Bearer\s+/i,'');if(!token||token.startsWith('sb_'))return null;
@@ -107,7 +107,8 @@ Deno.serve(async(req)=>{
    const ml=await admin.auth.admin.generateLink({type:'magiclink',email:user.email});if(ml.error)throw ml.error;
    const site=UUID.test(String(b.site_id||''))?String(b.site_id):'';
    const base=await appUrl();
-   return json({ok:true,url:base+'/accept?token_hash='+encodeURIComponent(ml.data.properties.hashed_token)+'&type=magiclink'+(site?'&next='+encodeURIComponent('/?site='+site):'')});
+   const next=/^\/(?!\/)[\w\-/?=&.%]*$/.test(String(b.next||''))?String(b.next):site?'/?site='+site:'';
+   return json({ok:true,url:base+'/accept?token_hash='+encodeURIComponent(ml.data.properties.hashed_token)+'&type=magiclink'+(next?'&next='+encodeURIComponent(next):'')});
   }
   const siteId=clean(b.site_id,80);if(!UUID.test(siteId))throw new Error('Choose a site');
   const role=await roleOn(user,siteId);if(!role)throw new Error('You do not have access to this site');
