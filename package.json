@@ -1,0 +1,30 @@
+{
+  "name": "insights",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "cloudflare:build": "opennextjs-cloudflare build",
+    "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
+    "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
+    "tracker": "python3 -c \"import json;open('supabase/functions/web-recorder/tracker.ts','w').write('// Generated from tracker.src.js — do not edit by hand.\\nexport const TRACKER = '+json.dumps(open('supabase/functions/web-recorder/tracker.src.js').read())+';\\n')\""
+  },
+  "dependencies": {
+    "@supabase/ssr": "0.7.0",
+    "@supabase/supabase-js": "2.57.4",
+    "next": "15.5.25",
+    "react": "19.1.1",
+    "react-dom": "19.1.1"
+  },
+  "devDependencies": {
+    "@opennextjs/cloudflare": "1.20.6",
+    "@types/node": "24.5.2",
+    "@types/react": "19.1.13",
+    "typescript": "5.9.2",
+    "wrangler": "4.129.1"
+  },
+  "engines": {
+    "node": ">=20.9.0"
+  }
+}

@@ -1,0 +1,19 @@
+Cloudflare Workers build settings (Workers & Pages → insights → Settings → Build)
+
+Git repository:
+broadlanddigital2/insights
+
+Production branch:
+main
+
+Build command:
+LEAVE BLANK
+
+Deploy command:
+npm run deploy
+
+Root directory:
+/
+
+Custom domain:
+insights.racecargraphics.uk
