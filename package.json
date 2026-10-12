@@ -8,7 +8,7 @@
     "cloudflare:build": "opennextjs-cloudflare build",
     "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
     "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
-    "tracker": "python3 -c \"import json;open('supabase/functions/web-recorder/tracker.ts','w').write('// Generated from tracker.src.js — do not edit by hand.\\nexport const TRACKER = '+json.dumps(open('supabase/functions/web-recorder/tracker.src.js').read())+';\\n')\""
+    "tracker": "cp supabase/functions/web-recorder/tracker.src.js public/t.js"
   },
   "dependencies": {
     "@supabase/ssr": "0.7.0",

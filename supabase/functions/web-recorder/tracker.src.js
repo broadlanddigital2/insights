@@ -1,6 +1,6 @@
 // Insights tracker v2 — visits, users, events, page performance, errors and screen recordings for any website.
-// Source for tracker.ts (served as web-recorder?asset=t.js). After editing, regenerate tracker.ts:
-//   python3 -c "import json;open('tracker.ts','w').write('export const TRACKER = '+json.dumps(open('tracker.src.js').read())+';\n')"
+// Source of the tracker (served as web-recorder?asset=t.js, which loads it from the Insights app). After editing run:
+//   npm run tracker   (copies it to public/t.js; the app deploy publishes it)
 //
 // <script src="https://gbxjvsrgqcomkjxakbso.supabase.co/functions/v1/web-recorder?asset=t.js" data-site="SITE KEY" defer></script>
 //   data-consent="wait" (default)  nothing is recorded until Insights.consent(true) (call it from your cookie banner)

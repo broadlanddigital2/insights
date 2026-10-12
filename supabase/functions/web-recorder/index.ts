@@ -10,7 +10,7 @@
 //  POST {action:"cleanup"}              – cron (x-insights-secret): deletes recordings past each site's retention
 //  POST ?op=import&path=…                – the move from the CRM project (x-insights-secret): stores one recording file
 import {createClient} from 'npm:@supabase/supabase-js@2.57.4';
-import {TRACKER} from './tracker.ts';
+import {tracker} from './tracker.ts';
 
 const SUPABASE_URL=Deno.env.get('SUPABASE_URL')||'';
 const SERVICE_ROLE_KEY=Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')||'';
@@ -86,7 +86,7 @@ async function chunk(req:Request){
 }
 
 async function asset(name:string){
- if(name==='t.js')return new Response(TRACKER,{status:200,headers:{'Content-Type':'application/javascript; charset=utf-8','Cache-Control':'public, max-age=3600','Access-Control-Allow-Origin':'*','Cross-Origin-Resource-Policy':'cross-origin'}});
+ if(name==='t.js')return new Response(await tracker(),{status:200,headers:{'Content-Type':'application/javascript; charset=utf-8','Cache-Control':'public, max-age=3600','Access-Control-Allow-Origin':'*','Cross-Origin-Resource-Policy':'cross-origin'}});
  const a=ASSETS[name];if(!a)return new Response('Not found',{status:404});
  let bytes=cache.get(name);
  if(!bytes){const r=await fetch(a[0]);if(!r.ok)return new Response('Unavailable',{status:502});bytes=new Uint8Array(await r.arrayBuffer());cache.set(name,bytes);}
