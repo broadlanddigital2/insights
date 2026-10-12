@@ -149,12 +149,12 @@ async function admin(supabase:any,body:any){
 }
 
 function SiteSetup({supabase,site,crmAdmin,onChanged}:any){
-  const [f,setF]=useState<any>({name:site.name,domains:(site.domains||[]).join("\n"),consent_mode:site.consent_mode,plan:site.plan_key,session_limit:"",retention_days:"",is_active:site.is_active});
+  const [f,setF]=useState<any>({owner_name:site.owner_name||"",name:site.name,domains:(site.domains||[]).join("\n"),consent_mode:site.consent_mode,plan:site.plan_key,session_limit:"",retention_days:"",is_active:site.is_active});
   const [plans,setPlans]=useState<any[]>([]),[msg,setMsg]=useState(""),[busy,setBusy]=useState(false),[copied,setCopied]=useState(false);
   useEffect(()=>{if(crmAdmin)void supabase.from("insight_plans").select("*").order("sort_order").then(({data}:any)=>setPlans(data||[]))},[]);
   useEffect(()=>{if(crmAdmin)void supabase.from("insight_sites").select("session_limit,retention_days").eq("id",site.id).maybeSingle().then(({data}:any)=>data&&setF((x:any)=>({...x,session_limit:data.session_limit??"",retention_days:data.retention_days??""})))},[site.id]);
   async function save(e:any){e.preventDefault();setBusy(true);setMsg("");try{
-    const body:any={action:"update_site",site_id:site.id,name:f.name,domains:f.domains,consent_mode:f.consent_mode};
+    const body:any={action:"update_site",site_id:site.id,owner_name:f.owner_name,name:f.name,domains:f.domains,consent_mode:f.consent_mode};
     if(crmAdmin)Object.assign(body,{plan:f.plan,session_limit:f.session_limit,retention_days:f.retention_days,is_active:f.is_active});
     await admin(supabase,body);setMsg("Saved.");onChanged?.()}catch(err:any){setMsg(err.message)}finally{setBusy(false)}}
   async function newKey(){if(!window.confirm("Make a new site key? The tracking code on the website must be replaced, or recording stops."))return;setBusy(true);try{await admin(supabase,{action:"new_key",site_id:site.id});setMsg("New key made. Copy the new tracking code onto the website.");onChanged?.()}catch(err:any){setMsg(err.message)}finally{setBusy(false)}}
@@ -177,9 +177,10 @@ Insights.reset()   // when they sign out`}</pre>
     <Panel title="Settings">
       <form className="signagePackageForm insForm" onSubmit={save}>
         <label>Site name<input required value={f.name} onChange={e=>setF({...f,name:e.target.value})}/></label>
+        <label>Client or owner<input value={f.owner_name} onChange={e=>setF({...f,owner_name:e.target.value})} placeholder="Who the website belongs to"/></label>
         <label>Website domains <small>One per line. Subdomains are included (example.com also covers shop.example.com).</small><textarea rows={3} value={f.domains} onChange={e=>setF({...f,domains:e.target.value})}/></label>
         <label>Recording starts<select value={f.consent_mode} onChange={e=>setF({...f,consent_mode:e.target.value})}><option value="wait">When the visitor accepts analytics cookies (recommended)</option><option value="auto">Straight away</option></select></label>
-        {crmAdmin&&<fieldset className="signageScreenPick"><legend>Plan (CRM admins only)</legend>
+        {crmAdmin&&<fieldset className="signageScreenPick"><legend>Plan (Insights admins only)</legend>
           <div className="employeeModalRow"><label>Plan<select value={f.plan} onChange={e=>setF({...f,plan:e.target.value})}>{plans.map(p=><option key={p.key} value={p.key}>{p.name}{p.monthly_sessions?" · "+num(p.monthly_sessions)+" visits/month":" · unlimited"} · {p.retention_days} days</option>)}</select></label>
             <label>Own monthly limit<input type="number" min={0} value={f.session_limit} onChange={e=>setF({...f,session_limit:e.target.value})} placeholder="Use the plan's"/></label>
             <label>Keep recordings (days)<input type="number" min={7} max={730} value={f.retention_days} onChange={e=>setF({...f,retention_days:e.target.value})} placeholder="Use the plan's"/></label></div>

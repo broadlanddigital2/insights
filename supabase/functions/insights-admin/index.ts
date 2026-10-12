@@ -1,6 +1,9 @@
 // Insights: sites and their teams.
-//  create_site      – CRM admins/super users: add a website (ours or a third party's), with its plan and limits
-//  update_site      – site managers: name, domains, consent mode. CRM admins also: plan, limits, retention, on/off
+// Insights has its own administrators (table insight_admins, not CRM roles) and its own logins: people invited here get
+// an Insights-only login (app_metadata.insights_only), which the CRM refuses.
+//  create_site      – Insights admins: add a website (ours or anyone's), with its plan and limits
+//  list_admins / add_admin / remove_admin – Insights admins: who runs Insights
+//  update_site      – site managers: name, domains, consent mode. Insights admins also: plan, limits, retention, on/off
 //  new_key          – site managers: replace the site key (the old snippet stops recording)
 //  invite           – site managers: invite someone by email as viewer or manager (sends a sign-in email)
 //  set_role         – site managers: change a member between viewer and manager
@@ -29,8 +32,9 @@ async function appUrl(){const {data}=await admin.from('ecommerce_system_secrets'
 async function who(req:Request){
  const token=(req.headers.get('authorization')||'').replace(/^Bearer\s+/i,'');if(!token||token.startsWith('sb_'))return null;
  const {data:{user}}=await admin.auth.getUser(token);if(!user)return null;
- const {data:p}=await admin.from('profiles').select('role,is_active,first_name,last_name').eq('id',user.id).maybeSingle();
- return {id:user.id,email:user.email||'',crmAdmin:!!p?.is_active&&['admin','super_user'].includes(String(p?.role)),name:[p?.first_name,p?.last_name].filter(Boolean).join(' ')||user.email||''};
+ const {data:a}=await admin.from('insight_admins').select('user_id').eq('user_id',user.id).maybeSingle();
+ const md:any=user.user_metadata||{};
+ return {id:user.id,email:user.email||'',crmAdmin:!!a,name:[md.first_name,md.last_name].filter(Boolean).join(' ')||user.email||''};
 }
 async function roleOn(user:any,siteId:string){
  if(user.crmAdmin)return 'admin';
@@ -45,7 +49,9 @@ async function sendInvite(site:any,email:string,role:string,first:string,inviter
  let link:any=null,isNew=true;
  const inv=await admin.auth.admin.generateLink({type:'invite',email,options:{data:{first_name:first||null},redirectTo:base+'/accept'}});
  if(inv.error){if(!/already|registered|exists/i.test(inv.error.message))throw inv.error;isNew=false;const ml=await admin.auth.admin.generateLink({type:'magiclink',email,options:{redirectTo:base}});if(ml.error)throw ml.error;link=ml.data;}
- else link=inv.data;
+ else{link=inv.data;
+  // A new login made by Insights is for Insights only: the CRM won't let it in.
+  if(link.user?.id)await admin.auth.admin.updateUserById(link.user.id,{app_metadata:{...(link.user.app_metadata||{}),insights_only:true}});}
  const url=base+'/accept?token_hash='+encodeURIComponent(link.properties.hashed_token)+'&type='+(isNew?'invite':'magiclink');
  const what=role==='manager'?'manage':'view';
  if(signInOnly){
@@ -78,18 +84,20 @@ Deno.serve(async(req)=>{
  // to find out who has access).
  if(action==='login_link'){
   const email=clean(b.email,200).toLowerCase();
-  if(EMAIL.test(email)){const {data:m}=await admin.from('insight_site_members').select('site_id,role,insight_sites(name,domains)').eq('email',email).limit(1).maybeSingle();
+  if(EMAIL.test(email)){const {data:ad}=await admin.from('insight_admins').select('user_id').ilike('email',email).limit(1).maybeSingle();
+   if(ad){try{await sendInvite({name:'Insights',domains:['all websites']},email,'manager','',{name:'Insights',email:''},true)}catch(e){console.error('login link',e)}return json({ok:true});}
+   const {data:m}=await admin.from('insight_site_members').select('site_id,role,insight_sites(name,domains)').eq('email',email).limit(1).maybeSingle();
    if(m)try{await sendInvite({name:(m as any).insight_sites?.name||'Insights',domains:(m as any).insight_sites?.domains||[]},email,m.role,'',{name:'Insights',email:''},true)}catch(e){console.error('login link',e)}}
   return json({ok:true});
  }
  const user=await who(req);if(!user)return json({error:'Sign in required'},401);
  try{
   if(action==='create_site'){
-   if(!user.crmAdmin)throw new Error('Only CRM admins can add sites');
+   if(!user.crmAdmin)throw new Error('Only Insights admins can add websites');
    const name=clean(b.name,120);if(!name)throw new Error('Give the site a name');
    const d=domains(b.domains);if(!d.length)throw new Error('Add the website address (domain)');
    const plan=clean(b.plan,20)||'starter';
-   const row:any={name,domains:d,plan,consent_mode:b.consent_mode==='auto'?'auto':'wait',business_unit_id:UUID.test(String(b.business_unit_id||''))?b.business_unit_id:null,created_by:user.id,
+   const row:any={name,domains:d,plan,owner_name:clean(b.owner_name,120)||null,consent_mode:b.consent_mode==='auto'?'auto':'wait',business_unit_id:UUID.test(String(b.business_unit_id||''))?b.business_unit_id:null,created_by:user.id,
     session_limit:b.session_limit===''||b.session_limit==null?null:Math.max(0,Math.round(Number(b.session_limit))),retention_days:b.retention_days===''||b.retention_days==null?null:Math.min(730,Math.max(7,Math.round(Number(b.retention_days))))};
    const {data:site,error}=await admin.from('insight_sites').insert(row).select('*').single();if(error)throw error;
    let invited:any=null;
@@ -98,6 +106,29 @@ Deno.serve(async(req)=>{
     await admin.from('insight_site_members').upsert({site_id:site.id,email:owner,role:'manager',invited_by:user.id},{onConflict:'site_id,email'});
     try{invited=await sendInvite(site,owner,'manager',clean(b.owner_first_name,80),user);if(invited.user_id)await admin.from('insight_site_members').update({user_id:invited.user_id}).eq('site_id',site.id).eq('email',owner);}catch(e:any){invited={error:e.message}}}
    return json({ok:true,site,invited});
+  }
+  if(action==='list_admins'||action==='add_admin'||action==='remove_admin'){
+   if(!user.crmAdmin)throw new Error('Only Insights admins can do this');
+   if(action==='add_admin'){
+    const email=clean(b.email,200).toLowerCase();if(!EMAIL.test(email))throw new Error('Enter a valid email address');
+    const sent=await sendInvite({name:'Insights administration',domains:['all websites']},email,'manager',clean(b.first_name,80),user);
+    let id=sent.user_id;
+    if(!id){const {data:list}=await admin.auth.admin.listUsers({page:1,perPage:1000});id=(list?.users||[]).find((u:any)=>String(u.email||'').toLowerCase()===email)?.id||null;}
+    if(!id)throw new Error('Could not create the login');
+    const {error}=await admin.from('insight_admins').upsert({user_id:id,email,added_by:user.id},{onConflict:'user_id'});if(error)throw error;
+   }
+   if(action==='remove_admin'){
+    const id=clean(b.user_id,80);if(id===user.id)throw new Error('You cannot remove yourself');
+    const {count}=await admin.from('insight_admins').select('user_id',{count:'exact',head:true});if((count||0)<=1)throw new Error('Insights needs at least one admin');
+    const {error}=await admin.from('insight_admins').delete().eq('user_id',id);if(error)throw error;
+   }
+   const {data,error}=await admin.from('insight_admins').select('user_id,email,added_at').order('added_at');if(error)throw error;
+   return json({ok:true,admins:data});
+  }
+  if(action==='update_account'){
+   const first=clean(b.first_name,80),last=clean(b.last_name,80);
+   const {error}=await admin.auth.admin.updateUserById(user.id,{user_metadata:{first_name:first||null,last_name:last||null}});if(error)throw error;
+   return json({ok:true});
   }
   // "Open in Insights" from the CRM: the Insights app is on its own domain with its own sign-in, so hand over with a
   // one-time sign-in link for the same person (no email is sent; the link is used straight away).
@@ -120,6 +151,7 @@ Deno.serve(async(req)=>{
    if(b.name!==undefined){const n=clean(b.name,120);if(!n)throw new Error('Give the site a name');patch.name=n;}
    if(b.domains!==undefined){const d=domains(b.domains);if(!d.length)throw new Error('Keep at least one domain');patch.domains=d;}
    if(b.consent_mode!==undefined)patch.consent_mode=b.consent_mode==='auto'?'auto':'wait';
+   if(b.owner_name!==undefined)patch.owner_name=clean(b.owner_name,120)||null;
    if(role==='admin'){
     if(b.plan!==undefined)patch.plan=clean(b.plan,20);
     if(b.session_limit!==undefined)patch.session_limit=b.session_limit===''||b.session_limit==null?null:Math.max(0,Math.round(Number(b.session_limit)));

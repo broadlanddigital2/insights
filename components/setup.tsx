@@ -95,11 +95,11 @@ export function InviteMany({supabase,site,onSent,intro=true}:{supabase:any;site:
 
 export function AddSite({supabase,businesses=[],onDone,onCancel}:any){
   const [step,setStep]=useState(1),[site,setSite]=useState<any>(null),[sent,setSent]=useState(false);
-  const [f,setF]=useState<any>({name:"",domains:"",plan:"starter",consent_mode:"wait",business_unit_id:"",session_limit:"",retention_days:""});
+  const [f,setF]=useState<any>({name:"",domains:"",plan:"starter",consent_mode:"wait",business_unit_id:"",owner_name:"",session_limit:"",retention_days:""});
   const [plans,setPlans]=useState<any[]>([]),[msg,setMsg]=useState(""),[busy,setBusy]=useState(false);
   useEffect(()=>{void supabase.from("insight_plans").select("*").order("sort_order").then(({data}:any)=>setPlans(data||[]))},[]);
   async function create(e:any){e.preventDefault();setBusy(true);setMsg("");try{
-    if(site){const r=await admin(supabase,{action:"update_site",site_id:site.id,name:f.name,domains:f.domains,consent_mode:f.consent_mode,plan:f.plan,business_unit_id:f.business_unit_id});setSite(r.site)}
+    if(site){const r=await admin(supabase,{action:"update_site",site_id:site.id,name:f.name,domains:f.domains,consent_mode:f.consent_mode,plan:f.plan,owner_name:f.owner_name,business_unit_id:f.business_unit_id});setSite(r.site)}
     else{const r=await admin(supabase,{action:"create_site",...f});setSite(r.site)}
     setStep(2)}catch(err:any){setMsg(err.message)}finally{setBusy(false)}}
   const close=()=>{if(site)onDone?.(site,true);else onCancel?.()};
@@ -112,7 +112,8 @@ export function AddSite({supabase,businesses=[],onDone,onCancel}:any){
       <label>Website address <small>One per line, without https:// — subdomains are included automatically</small><textarea required rows={2} value={f.domains} onChange={e=>setF({...f,domains:e.target.value})} placeholder="smithsgarage.co.uk"/></label>
       <div className="employeeModalRow"><label>Plan<select value={f.plan} onChange={e=>setF({...f,plan:e.target.value})}>{plans.map(p=><option key={p.key} value={p.key}>{p.name}{p.monthly_sessions?" · "+num(p.monthly_sessions)+" visits/month":" · unlimited"} · kept {p.retention_days} days</option>)}</select></label>
         <label>Recording starts<select value={f.consent_mode} onChange={e=>setF({...f,consent_mode:e.target.value})}><option value="wait">After the visitor accepts analytics cookies</option><option value="auto">Straight away</option></select></label></div>
-      {businesses.length>0&&<label>Whose website<select value={f.business_unit_id} onChange={e=>setF({...f,business_unit_id:e.target.value})}><option value="">A client's website</option>{businesses.map((b:any)=><option key={b.id} value={b.id}>Ours — {b.name}</option>)}</select></label>}
+      <label>Client or owner <small>Who the website belongs to — any business, it doesn't need to be in the CRM</small><input value={f.owner_name} onChange={e=>setF({...f,owner_name:e.target.value})} placeholder="e.g. Smith's Garage Ltd"/></label>
+      {businesses.length>0&&<label>Link to one of our CRM businesses <small>Optional. Only for our own websites: links their website enquiries to the visit they came from</small><select value={f.business_unit_id} onChange={e=>setF({...f,business_unit_id:e.target.value})}><option value="">Not linked (client website)</option>{businesses.map((b:any)=><option key={b.id} value={b.id}>{b.name}</option>)}</select></label>}
       {msg&&<p className="crmNotice">{msg}</p>}
       <div className="employeeFormActions"><button type="button" className="secondaryButton" onClick={close}>CANCEL</button><button className="crmPrimary" disabled={busy}>{busy?"SAVING…":site?"SAVE & CONTINUE":"CREATE & GET THE CODE"}</button></div>
     </form>}

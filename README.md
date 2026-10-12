@@ -4,8 +4,14 @@ Real-user monitoring for our websites and clients' websites: visitors and the pe
 recordings, events, funnels, metrics, Core Web Vitals and errors. Live at **https://insights.racecargraphics.uk**.
 
 Split out of the Race Car Graphics CRM (`broadlanddigital2/race-car-graphics-crm`) in October 2026 so it can be updated
-on its own. It still shares the CRM's Supabase project (`dipjypzrfigkzuarlsov`): the same logins, CRM admins see every
-site, and website enquiries (leads) link to the visit they came from.
+on its own. It still shares the CRM's Supabase project (`dipjypzrfigkzuarlsov`), but runs on its own:
+
+- **Its own admins:** table `insight_admins` (managed in Insights → Admins), not CRM roles. Admins add websites for
+  anyone, set plans and limits, and see every site. It was seeded with the CRM admins in October 2026.
+- **Its own logins:** people invited from Insights get a login marked `app_metadata.insights_only`; the CRM refuses
+  those logins. Each person can change their name and password under their email address (top right).
+- **Any website:** a site has a free-text "client or owner"; linking it to a CRM business is optional and only used for
+  our own websites, so their enquiries (leads) link to the visit they came from.
 
 ## What's where
 
