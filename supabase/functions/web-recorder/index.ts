@@ -1,5 +1,5 @@
-// Insights: website screen recordings for our sites and third-party sites (CRM Marketing → Website, and the
-// standalone Insights app). Each site (insight_sites) has a public key and the domains allowed to send to it.
+// Insights: website screen recordings for our sites and third-party sites. Runs in Insights' own Supabase project
+// (CRM Insights, gbxjvsrgqcomkjxakbso), separate from the CRM. Each site (insight_sites) has a public key and the domains allowed to send to it.
 //  POST ?op=chunk        – public: a gzip-compressed chunk from the tracker (t.js / rcg-analytics.js): analytics in its
 //                          meta (user, events, page views + web vitals) and, unless replay is off, rrweb events.
 //                          Checked against the site's domains and monthly limit, stored as-is in the private
@@ -7,7 +7,8 @@
 //  GET  ?asset=t.js      – public: the tracker for any site (<script … data-site="KEY">)
 //  GET  ?asset=…         – public: the rrweb recorder / player files (pinned version, served with a JS content type)
 //  POST {action:"playback", session_id} – anyone on the site's team: short-lived links to the visit's chunks
-//  POST {action:"cleanup"}              – cron (x-quote-cron-token): deletes recordings past each site's retention
+//  POST {action:"cleanup"}              – cron (x-insights-secret): deletes recordings past each site's retention
+//  POST ?op=import&path=…                – the move from the CRM project (x-insights-secret): stores one recording file
 import {createClient} from 'npm:@supabase/supabase-js@2.57.4';
 import {TRACKER} from './tracker.ts';
 
@@ -21,7 +22,7 @@ const ASSETS:Record<string,[string,string]>={
  'player.js':[`https://cdn.jsdelivr.net/npm/rrweb-player@${RRWEB}/dist/rrweb-player.umd.min.cjs`,'application/javascript; charset=utf-8'],
  'player.css':[`https://cdn.jsdelivr.net/npm/rrweb-player@${RRWEB}/dist/style.min.css`,'text/css; charset=utf-8'],
 };
-const CRM_ORIGINS=['https://staff.racecargraphics.uk','https://crm.racecargraphics.uk','https://insights.racecargraphics.uk','https://insights.justin-b8f.workers.dev','https://race-car-graphics-crm-v1.justin-b8f.workers.dev'];
+const CRM_ORIGINS=['https://insights.racecargraphics.uk','https://insights.justin-b8f.workers.dev','http://localhost:3000'];
 const ANON_KEY=Deno.env.get('SUPABASE_ANON_KEY')||'';
 // Sites by key (cached for a minute per instance).
 const siteCache=new Map<string,{at:number,site:any}>();
@@ -40,16 +41,17 @@ const cache=new Map<string,Uint8Array>();
 
 async function gunzip(bytes:Uint8Array){return await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))).text();}
 
+// The shared secret for scheduled jobs and the CRM bridge (insight_settings.bridge_secret).
 async function cronOk(req:Request){
- const t=req.headers.get('x-quote-cron-token');if(!t)return false;
- const {data}=await admin.from('ecommerce_system_secrets').select('secret_value').eq('secret_name','quote_followup_cron_token').maybeSingle();
- return !!data?.secret_value&&t===data.secret_value;
+ const t=req.headers.get('x-insights-secret')||req.headers.get('x-quote-cron-token');if(!t)return false;
+ const {data}=await admin.from('insight_settings').select('value').eq('name','bridge_secret').maybeSingle();
+ return !!data?.value&&t===data.value;
 }
 async function chunk(req:Request){
  const origin=req.headers.get('origin')||req.headers.get('referer')||'';
  let host='';try{host=new URL(origin).hostname}catch{}
  // Health check from the CRM's scheduler: a base64 chunk in JSON, with the cron token.
- const test=req.headers.get('x-quote-cron-token')&&await cronOk(req);
+ const test=(req.headers.get('x-insights-secret')||req.headers.get('x-quote-cron-token'))&&await cronOk(req);
  if(test)host='racecargraphics.uk';
  const buf=test?Uint8Array.from(atob(String((await req.json().catch(()=>({}))).b64||'')),c=>c.charCodeAt(0)):new Uint8Array(await req.arrayBuffer());
  if(buf.length<20||buf.length>1_500_000)return new Response('Bad size',{status:413});
@@ -120,16 +122,22 @@ async function cleanup(){
 Deno.serve(async(req)=>{
  const url=new URL(req.url);
  if(req.method==='GET'&&url.searchParams.get('asset'))return asset(String(url.searchParams.get('asset')));
+ if(req.method==='POST'&&url.searchParams.get('op')==='import'){
+  if(!await cronOk(req))return new Response('Not allowed',{status:403});
+  const path=String(url.searchParams.get('path')||'');
+  if(!/^[0-9a-f-]{36}\/[0-9a-f-]{36}\/\d{5}\.json\.gz$/.test(path))return new Response('Bad path',{status:400});
+  const {error}=await admin.storage.from(BUCKET).upload(path,new Uint8Array(await req.arrayBuffer()),{contentType:'application/gzip',upsert:true});
+  return error?new Response(error.message,{status:500}):new Response('ok');
+ }
  if(req.method==='POST'&&url.searchParams.get('op')==='chunk'){try{return await chunk(req)}catch(e){console.error(e);return new Response('Error',{status:500})}}
  const origin=req.headers.get('origin')||'';
- const cors={'Access-Control-Allow-Origin':CRM_ORIGINS.includes(origin)?origin:CRM_ORIGINS[0],'Access-Control-Allow-Headers':'authorization,content-type,apikey,x-client-info,x-quote-cron-token','Access-Control-Allow-Methods':'GET,POST,OPTIONS','Vary':'Origin'};
+ const cors={'Access-Control-Allow-Origin':CRM_ORIGINS.includes(origin)?origin:CRM_ORIGINS[0],'Access-Control-Allow-Headers':'authorization,content-type,apikey,x-client-info,x-insights-secret','Access-Control-Allow-Methods':'GET,POST,OPTIONS','Vary':'Origin'};
  const json=(b:any,s=200)=>new Response(JSON.stringify(b),{status:s,headers:{...cors,'Content-Type':'application/json'}});
  if(req.method==='OPTIONS')return new Response('ok',{headers:cors});
  if(req.method!=='POST')return json({error:'Method not allowed'},405);
  const b=await req.json().catch(()=>({}));
  if(b.action==='cleanup'){
-  const {data:secret}=await admin.from('ecommerce_system_secrets').select('secret_value').eq('secret_name','quote_followup_cron_token').maybeSingle();
-  if(!(secret?.secret_value&&req.headers.get('x-quote-cron-token')===secret.secret_value))return json({error:'Not allowed'},403);
+  if(!await cronOk(req))return json({error:'Not allowed'},403);
   return json({ok:true,removed:await cleanup()});
  }
  const db=asUser(req);if(!db)return json({error:'Sign in required'},401);

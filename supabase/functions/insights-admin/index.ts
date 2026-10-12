@@ -1,6 +1,8 @@
 // Insights: sites and their teams.
-// Insights has its own administrators (table insight_admins, not CRM roles) and its own logins: people invited here get
-// an Insights-only login (app_metadata.insights_only), which the CRM refuses.
+// Runs in Insights' own Supabase project (CRM Insights, gbxjvsrgqcomkjxakbso), with its own logins and its own
+// administrators (table insight_admins, by email). The CRM talks to it only through the bridge actions below.
+//  bridge_sso / bridge_summary / bridge_lead – the CRM project (x-insights-secret): sign-in link for a CRM admin,
+//      their websites with last-7-day totals for Marketing → Website, and a website enquiry linked to its visit
 //  create_site      – Insights admins: add a website (ours or anyone's), with its plan and limits
 //  list_admins / add_admin / remove_admin – Insights admins: who runs Insights
 //  update_site      – site managers: name, domains, consent mode. Insights admins also: plan, limits, retention, on/off
@@ -16,7 +18,7 @@ import {createClient} from 'npm:@supabase/supabase-js@2.57.4';
 const SUPABASE_URL=Deno.env.get('SUPABASE_URL')||'';
 const SERVICE_ROLE_KEY=Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')||'';
 const admin=createClient(SUPABASE_URL,SERVICE_ROLE_KEY,{auth:{persistSession:false,autoRefreshToken:false}});
-const ORIGINS=['https://staff.racecargraphics.uk','https://crm.racecargraphics.uk','https://insights.racecargraphics.uk','https://insights.justin-b8f.workers.dev','https://race-car-graphics-crm-v1.justin-b8f.workers.dev'];
+const ORIGINS=['https://insights.racecargraphics.uk','https://insights.justin-b8f.workers.dev','http://localhost:3000'];
 const clean=(v:any,n=300)=>String(v??'').replace(/\0/g,'').trim().slice(0,n);
 const esc=(v:string)=>String(v).replace(/[<>&"]/g,(c)=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'} as any)[c]);
 const EMAIL=/^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -27,12 +29,13 @@ function domains(v:any){
  for(const d of list)if(!/^(\*\.)?([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/.test(d))throw new Error('"'+d+'" is not a website domain. Use the address without https://, e.g. example.co.uk');
  return [...new Set(list)].slice(0,20);
 }
-async function appUrl(){const {data}=await admin.from('ecommerce_system_secrets').select('secret_value').eq('secret_name','insights_app_url').maybeSingle();return String(data?.secret_value||'https://insights.racecargraphics.uk').replace(/\/$/,'');}
+async function setting(name:string){const {data}=await admin.from('insight_settings').select('value').eq('name',name).maybeSingle();return data?.value||'';}
+async function appUrl(){return String(await setting('app_url')||'https://insights.racecargraphics.uk').replace(/\/$/,'');}
 
 async function who(req:Request){
  const token=(req.headers.get('authorization')||'').replace(/^Bearer\s+/i,'');if(!token||token.startsWith('sb_'))return null;
  const {data:{user}}=await admin.auth.getUser(token);if(!user)return null;
- const {data:a}=await admin.from('insight_admins').select('user_id').eq('user_id',user.id).maybeSingle();
+ const {data:a}=await admin.from('insight_admins').select('email').or(`user_id.eq.${user.id},email.ilike.${String(user.email||'-').replace(/[,()]/g,'')}`).limit(1).maybeSingle();
  const md:any=user.user_metadata||{};
  return {id:user.id,email:user.email||'',crmAdmin:!!a,name:[md.first_name,md.last_name].filter(Boolean).join(' ')||user.email||''};
 }
@@ -51,7 +54,7 @@ async function sendInvite(site:any,email:string,role:string,first:string,inviter
  if(inv.error){if(!/already|registered|exists/i.test(inv.error.message))throw inv.error;isNew=false;const ml=await admin.auth.admin.generateLink({type:'magiclink',email,options:{redirectTo:base}});if(ml.error)throw ml.error;link=ml.data;}
  else{link=inv.data;
   // A new login made by Insights is for Insights only: the CRM won't let it in.
-  if(link.user?.id)await admin.auth.admin.updateUserById(link.user.id,{app_metadata:{...(link.user.app_metadata||{}),insights_only:true}});}
+  }
  const url=base+'/accept?token_hash='+encodeURIComponent(link.properties.hashed_token)+'&type='+(isNew?'invite':'magiclink');
  const what=role==='manager'?'manage':'view';
  if(signInOnly){
@@ -90,6 +93,54 @@ Deno.serve(async(req)=>{
    if(m)try{await sendInvite({name:(m as any).insight_sites?.name||'Insights',domains:(m as any).insight_sites?.domains||[]},email,m.role,'',{name:'Insights',email:''},true)}catch(e){console.error('login link',e)}}
   return json({ok:true});
  }
+ // ---- Bridge from the CRM project (shared secret; the CRM has already checked who the person is) ----
+ if(action.startsWith('bridge_')){
+  const secret=await setting('bridge_secret');
+  if(!secret||req.headers.get('x-insights-secret')!==secret)return json({error:'Not allowed'},403);
+  try{
+   // The one-off move from the CRM project: rows posted from there (pg_net), upserted as they are.
+   if(action==='bridge_import'){
+    const T:Record<string,string>={insight_sites:'id',insight_site_members:'id',web_sessions:'id',web_session_chunks:'session_id,seq',insight_users:'site_id,user_key',
+      insight_pageviews:'id',marketing_funnels:'id',insight_charts:'id',crm_businesses:'id'};
+    const table=String(b.table||'');if(!T[table]||!Array.isArray(b.rows))throw new Error('Bad import');
+    for(let i=0;i<b.rows.length;i+=500){const {error}=await admin.from(table).upsert(b.rows.slice(i,i+500),{onConflict:T[table]});if(error)throw error;}
+    return json({ok:true,table,rows:b.rows.length});
+   }
+   if(action==='bridge_import_events'){
+    if(!Array.isArray(b.rows))throw new Error('Bad import');
+    for(let i=0;i<b.rows.length;i+=500){const {error}=await admin.from('insight_events').insert(b.rows.slice(i,i+500).map((r:any)=>{const {id,...x}=r;return x;}));if(error)throw error;}
+    return json({ok:true,rows:b.rows.length});
+   }
+   if(action==='bridge_lead'){
+    const sid=clean(b.session_id,40);if(!UUID.test(sid))return json({ok:true});
+    const {data:sess}=await admin.from('web_sessions').update({lead_id:UUID.test(String(b.lead_id||''))?b.lead_id:null}).eq('id',sid).is('lead_id',null).select('id,site_id,user_key').maybeSingle();
+    if(sess?.user_key&&sess.site_id){
+     const email=clean(b.email,200)?.toLowerCase()||null,name=clean(b.name,200)||null,phone=clean(b.phone,60)||null;
+     const {data:u}=await admin.from('insight_users').select('email,name,traits').eq('site_id',sess.site_id).eq('user_key',sess.user_key).maybeSingle();
+     if(u)await admin.from('insight_users').update({email:u.email||email,name:u.name||name,traits:{...(u.traits||{}),lead:true,...(phone?{phone}:{})}}).eq('site_id',sess.site_id).eq('user_key',sess.user_key);
+     const {data:ss}=await admin.from('web_sessions').select('id,user_email,user_name').eq('site_id',sess.site_id).eq('user_key',sess.user_key);
+     for(const x of ss||[])if(!x.user_email||!x.user_name)await admin.from('web_sessions').update({user_email:x.user_email||email,user_name:x.user_name||name}).eq('id',x.id);
+    }
+    return json({ok:true,linked:!!sess});
+   }
+   const email=clean(b.email,200).toLowerCase();if(!EMAIL.test(email))throw new Error('No email for this person');
+   const {data:isAdmin}=await admin.from('insight_admins').select('email').ilike('email',email).maybeSingle();
+   const {data:mem}=await admin.from('insight_site_members').select('site_id').ilike('email',email);
+   if(!isAdmin&&!(mem||[]).length)throw new Error('You do not have access to Insights. Ask an Insights admin to invite you.');
+   if(action==='bridge_summary'){
+    const {data,error}=await admin.rpc('insights_bridge_summary',{p_email:email,p_admin:!!isAdmin});if(error)throw error;
+    return json({ok:true,sites:data||[]});
+   }
+   if(action==='bridge_sso'){
+    let ml=await admin.auth.admin.generateLink({type:'magiclink',email});
+    if(ml.error){const c=await admin.auth.admin.createUser({email,email_confirm:true});if(c.error)throw c.error;ml=await admin.auth.admin.generateLink({type:'magiclink',email});if(ml.error)throw ml.error;}
+    const site=UUID.test(String(b.site_id||''))?String(b.site_id):'';
+    const next=/^\/(?!\/)[\w\-/?=&.%]*$/.test(String(b.next||''))?String(b.next):site?'/?site='+site:'';
+    return json({ok:true,url:(await appUrl())+'/accept?token_hash='+encodeURIComponent(ml.data.properties.hashed_token)+'&type=magiclink'+(next?'&next='+encodeURIComponent(next):'')});
+   }
+   throw new Error('Unknown action');
+  }catch(e:any){return json({error:String(e?.message||e)},400);}
+ }
  const user=await who(req);if(!user)return json({error:'Sign in required'},401);
  try{
   if(action==='create_site'){
@@ -114,15 +165,15 @@ Deno.serve(async(req)=>{
     const sent=await sendInvite({name:'Insights administration',domains:['all websites']},email,'manager',clean(b.first_name,80),user);
     let id=sent.user_id;
     if(!id){const {data:list}=await admin.auth.admin.listUsers({page:1,perPage:1000});id=(list?.users||[]).find((u:any)=>String(u.email||'').toLowerCase()===email)?.id||null;}
-    if(!id)throw new Error('Could not create the login');
-    const {error}=await admin.from('insight_admins').upsert({user_id:id,email,added_by:user.id},{onConflict:'user_id'});if(error)throw error;
+    const {error}=await admin.from('insight_admins').upsert({email,user_id:id,added_by:user.id},{onConflict:'email'});if(error)throw error;
    }
    if(action==='remove_admin'){
-    const id=clean(b.user_id,80);if(id===user.id)throw new Error('You cannot remove yourself');
-    const {count}=await admin.from('insight_admins').select('user_id',{count:'exact',head:true});if((count||0)<=1)throw new Error('Insights needs at least one admin');
-    const {error}=await admin.from('insight_admins').delete().eq('user_id',id);if(error)throw error;
+    const em=clean(b.email,200).toLowerCase();if(em===String(user.email||'').toLowerCase())throw new Error('You cannot remove yourself');
+    const {count}=await admin.from('insight_admins').select('email',{count:'exact',head:true});if((count||0)<=1)throw new Error('Insights needs at least one admin');
+    const {error}=await admin.from('insight_admins').delete().eq('email',em);if(error)throw error;
    }
    const {data,error}=await admin.from('insight_admins').select('user_id,email,added_at').order('added_at');if(error)throw error;
+   // (user_id is only set once they've signed in; the app keys rows by email)
    return json({ok:true,admins:data});
   }
   if(action==='update_account'){

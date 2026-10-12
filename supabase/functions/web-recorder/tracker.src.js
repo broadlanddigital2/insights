@@ -2,7 +2,7 @@
 // Source for tracker.ts (served as web-recorder?asset=t.js). After editing, regenerate tracker.ts:
 //   python3 -c "import json;open('tracker.ts','w').write('export const TRACKER = '+json.dumps(open('tracker.src.js').read())+';\n')"
 //
-// <script src="https://dipjypzrfigkzuarlsov.supabase.co/functions/v1/web-recorder?asset=t.js" data-site="SITE KEY" defer></script>
+// <script src="https://gbxjvsrgqcomkjxakbso.supabase.co/functions/v1/web-recorder?asset=t.js" data-site="SITE KEY" defer></script>
 //   data-consent="wait" (default)  nothing is recorded until Insights.consent(true) (call it from your cookie banner)
 //   data-consent="auto"            records straight away (the site owner is responsible for consent)
 //   data-replay="off"              analytics, events and performance only — no screen recording
@@ -16,7 +16,9 @@
   var CONSENT_MODE = (SCRIPT && SCRIPT.getAttribute("data-consent")) || "wait";
   var REPLAY = !SCRIPT || SCRIPT.getAttribute("data-replay") !== "off";
   if (!SITE || window.__insights) return; window.__insights = true;
-  var REC = (SCRIPT && SCRIPT.src ? SCRIPT.src.split("?")[0] : "https://dipjypzrfigkzuarlsov.supabase.co/functions/v1/web-recorder");
+  // Insights has its own Supabase project; older snippets load this file from the CRM project's address, so always
+  // send to (and load the recorder from) Insights' own.
+  var REC = "https://gbxjvsrgqcomkjxakbso.supabase.co/functions/v1/web-recorder";
   var TRACK = ["gclid", "gbraid", "wbraid", "fbclid", "msclkid", "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content"];
   var IDLE = 30 * 60 * 1000, FLUSH_MS = 10000;
 
@@ -51,7 +53,7 @@
   var started = false, state = null, rrweb = [], queue = [], pages = {}, pageStart = true, newSession = false, user = get("ins-user");
   var counters = { clicks: 0, rage: 0, errors: 0, warnings: 0, form: false };
   var current = null; // the current page view
-  var recordFn = null, consoleCount = 0, earlyConsole = [], lastClicks = [];
+  var recordFn = null, consoleCount = 0, earlyConsole = [], lastClicks = [], errSeen = {}, errSent = 0;
 
   function event(name, props) {
     if (!started) return;
@@ -105,7 +107,12 @@
   function logConsole(level, args, trace) {
     if (consoleCount > 300) return; consoleCount++;
     var message = Array.prototype.map.call(args, text).join(" ").slice(0, 2000);
-    if (level === "error" || level === "network") { counters.errors++; event("$error", { level: level, message: message.slice(0, 500), trace: trace ? String(trace).slice(0, 1500) : null }); }
+    if (level === "error" || level === "network") {
+      counters.errors++;
+      // A page stuck in an error loop: send each message a few times and at most 25 errors a page (all are counted).
+      var key = message.slice(0, 200); errSeen[key] = (errSeen[key] || 0) + 1;
+      if (errSeen[key] <= 3 && errSent < 25) { errSent++; event("$error", { level: level, message: message.slice(0, 500), trace: trace ? String(trace).slice(0, 1500) : null }); }
+    }
     else if (level === "warn") counters.warnings++;
     var payload = { level: level, message: message, trace: trace ? String(trace).slice(0, 2000) : null, url: location.pathname };
     var add = recordFn && recordFn.addCustomEvent;

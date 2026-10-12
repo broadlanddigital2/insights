@@ -1,7 +1,10 @@
 name: Deploy Supabase edge functions
 
-# Deploys edge functions from this repo to the live Supabase project.
-# - On push to main: deploys only the functions whose folder changed (web-recorder, insights-admin).
+# Deploys edge functions from this repo:
+#  - supabase/functions/*   → Insights' own project (CRM Insights, gbxjvsrgqcomkjxakbso)
+#  - supabase/crm-bridge/*  → the CRM project (dipjypzrfigkzuarlsov): the old tracker address and the CRM's "Open in
+#    Insights" / website summary, which pass through to Insights
+# - On push to main: deploys only the functions whose folder changed.
 # - Manually: Actions -> "Deploy Supabase edge functions" -> Run workflow, and list the functions to deploy.
 # Requires the repository secret SUPABASE_ACCESS_TOKEN (Supabase dashboard -> Account -> Access tokens).
 # Without it the job is skipped, so nothing is deployed.
@@ -10,11 +13,11 @@ name: Deploy Supabase edge functions
 on:
   push:
     branches: [main]
-    paths: ['supabase/functions/**']
+    paths: ['supabase/functions/**', 'supabase/crm-bridge/**']
   workflow_dispatch:
     inputs:
       functions:
-        description: 'Space-separated function names to deploy (e.g. "web-recorder insights-admin")'
+        description: 'Space-separated functions to deploy: names for Insights (web-recorder insights-admin), crm-bridge/<name> for the CRM project'
         required: true
 
 concurrency:
@@ -26,7 +29,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-      PROJECT_REF: dipjypzrfigkzuarlsov
+      PROJECT_REF: gbxjvsrgqcomkjxakbso
+      CRM_REF: dipjypzrfigkzuarlsov
     steps:
       - name: Check access token
         id: token
@@ -52,11 +56,11 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             list="$MANUAL"
           else
-            list=$(git diff --name-only HEAD~1 HEAD -- supabase/functions | cut -d/ -f3 | sort -u | tr '\n' ' ')
+            list="$(git diff --name-only HEAD~1 HEAD -- supabase/functions | cut -d/ -f3 | sort -u | tr '\n' ' ') $(git diff --name-only HEAD~1 HEAD -- supabase/crm-bridge | cut -d/ -f3 | sort -u | sed 's#^#crm-bridge/#' | tr '\n' ' ')"
           fi
           deploy=""
           for f in $list; do
-            if [ -f "supabase/functions/$f/index.ts" ] && ! echo " $deploy " | grep -q " $f "; then deploy="$deploy $f"; fi
+            if { [ -f "supabase/functions/$f/index.ts" ] || [ -f "supabase/$f/index.ts" ]; } && ! echo " $deploy " | grep -q " $f "; then deploy="$deploy $f"; fi
           done
           echo "Functions to deploy:${deploy:- none}"
           echo "list=$deploy" >> "$GITHUB_OUTPUT"
@@ -72,12 +76,17 @@ jobs:
           failed=0
           for f in ${{ steps.which.outputs.list }}; do
             echo "::group::Deploying $f"
-            if supabase functions deploy "$f" --project-ref "$PROJECT_REF" --no-verify-jwt --use-api > "deploy-$f.log" 2>&1; then
-              cat "deploy-$f.log"; echo "::notice title=Deployed $f::$(tail -n 1 "deploy-$f.log")"
+            log="deploy-${f//\//-}.log"
+            case "$f" in
+              crm-bridge/*) name="${f#crm-bridge/}"; ok=0; (cd supabase/crm-bridge && mkdir -p /tmp/cb/supabase/functions && rm -rf "/tmp/cb/supabase/functions/$name" && cp -r "$name" /tmp/cb/supabase/functions/ && cd /tmp/cb && supabase functions deploy "$name" --project-ref "$CRM_REF" --no-verify-jwt --use-api) > "$log" 2>&1 || ok=1 ;;
+              *) ok=0; supabase functions deploy "$f" --project-ref "$PROJECT_REF" --no-verify-jwt --use-api > "$log" 2>&1 || ok=1 ;;
+            esac
+            if [ "$ok" = "0" ]; then
+              cat "$log"; echo "::notice title=Deployed $f::$(tail -n 1 "$log")"
             else
-              cat "deploy-$f.log"; failed=1
+              cat "$log"; failed=1
               # Surface the CLI's own error text as an annotation, so it is visible without opening the log.
-              msg=$(tail -n 15 "deploy-$f.log" | sed 's/%/%25/g' | sed ':a;N;$!ba;s/\n/%0A/g')
+              msg=$(tail -n 15 "$log" | sed 's/%/%25/g' | sed ':a;N;$!ba;s/\n/%0A/g')
               echo "::error title=Deploy of $f failed::$msg"
             fi
             echo "::endgroup::"
