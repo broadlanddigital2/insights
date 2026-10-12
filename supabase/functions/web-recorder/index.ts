@@ -9,12 +9,12 @@
 //  POST {action:"playback", session_id} – anyone on the site's team: short-lived links to the visit's chunks
 //  POST {action:"cleanup"}              – cron (x-insights-secret): deletes recordings past each site's retention
 //  POST ?op=import&path=…                – the move from the CRM project (x-insights-secret): stores one recording file
-import {createClient} from 'npm:@supabase/supabase-js@2.57.4';
+import {createClient} from './supa.ts';
 import {tracker} from './tracker.ts';
 
 const SUPABASE_URL=Deno.env.get('SUPABASE_URL')||'';
 const SERVICE_ROLE_KEY=Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')||'';
-const admin=createClient(SUPABASE_URL,SERVICE_ROLE_KEY,{auth:{persistSession:false,autoRefreshToken:false}});
+const admin=createClient(SUPABASE_URL,SERVICE_ROLE_KEY);
 const BUCKET='web-recordings';
 const RRWEB='2.1.7';
 const ASSETS:Record<string,[string,string]>={
@@ -51,9 +51,13 @@ async function chunk(req:Request){
  const origin=req.headers.get('origin')||req.headers.get('referer')||'';
  let host='';try{host=new URL(origin).hostname}catch{}
  // Health check from the CRM's scheduler: a base64 chunk in JSON, with the cron token.
+ // Chunks forwarded by the old CRM address carry the website's origin in x-insights-origin (with the secret).
+ const fwd=req.headers.get('x-insights-origin');
  const test=(req.headers.get('x-insights-secret')||req.headers.get('x-quote-cron-token'))&&await cronOk(req);
- if(test)host='racecargraphics.uk';
- const buf=test?Uint8Array.from(atob(String((await req.json().catch(()=>({}))).b64||'')),c=>c.charCodeAt(0)):new Uint8Array(await req.arrayBuffer());
+ if(test&&fwd){try{host=new URL(fwd).hostname}catch{}}
+ else if(test)host='racecargraphics.uk';
+ const raw=new Uint8Array(await req.arrayBuffer());
+ const buf=test&&!fwd?Uint8Array.from(atob(String(JSON.parse(new TextDecoder().decode(raw)||'{}').b64||'')),c=>c.charCodeAt(0)):raw;
  if(buf.length<20||buf.length>1_500_000)return new Response('Bad size',{status:413});
  let body:any;try{body=JSON.parse(await gunzip(buf));}catch{return new Response('Bad chunk',{status:400});}
  const m=body?.meta||{};
@@ -69,7 +73,7 @@ async function chunk(req:Request){
  const ts=[...body.events.map((e:any)=>Number(e?.timestamp)),...evs.map((e:any)=>Number(e?.ts)),...pvs.map((p:any)=>Number(p?.ts)),...pvs.map((p:any)=>Number(p?.ts)+Number(p?.duration))].filter((n:number)=>Number.isFinite(n)&&n>1e12);
  const replay=body.events.length>0;
  const user=m.user&&typeof m.user==='object'&&m.user.id?{id:clean(m.user.id,200),email:clean(m.user.email,200),name:clean(m.user.name,200),traits:m.user.traits&&typeof m.user.traits==='object'?m.user.traits:{}}:null;
- const country=clean(req.headers.get('cf-ipcountry'),2);
+ const country=clean(req.headers.get('x-insights-country')||req.headers.get('cf-ipcountry'),2);
  const {data:outcome,error}=await admin.rpc('insights_record_chunk',{p:{site_id:site.id,sid,seq,page:Number(m.page)||0,page_start:!!m.page_start,path:clean(m.path),business:clean(m.business,40),host:clean(host,120),vid:m.vid||null,
   referrer:clean(m.referrer),utm_source:clean(m.utm_source,120),utm_medium:clean(m.utm_medium,120),utm_campaign:clean(m.utm_campaign,200),gclid:clean(m.gclid),
   device:clean(m.device,20),browser:clean(m.browser,40),os:clean(m.os,40),screen:clean(m.screen,20),
@@ -96,7 +100,7 @@ async function asset(name:string){
 // The signed-in person's own view of the data (row level security decides which sites they can see).
 function asUser(req:Request){
  const token=(req.headers.get('authorization')||'').replace(/^Bearer\s+/i,'');if(!token||token.startsWith('sb_'))return null;
- return createClient(SUPABASE_URL,ANON_KEY||SERVICE_ROLE_KEY,{auth:{persistSession:false,autoRefreshToken:false},global:{headers:{Authorization:'Bearer '+token}}});
+ return createClient(SUPABASE_URL,ANON_KEY||SERVICE_ROLE_KEY,{global:{headers:{Authorization:'Bearer '+token}}});
 }
 
 async function cleanup(){
@@ -111,7 +115,7 @@ async function cleanup(){
   if(!old?.length)break;
   const ids=old.map((r:any)=>r.id);
   const {data:chunks}=await admin.from('web_session_chunks').select('storage_path').in('session_id',ids);
-  const paths=(chunks||[]).map((c:any)=>c.storage_path);
+  const paths=(chunks||[]).map((c:any)=>c.storage_path).filter(Boolean);
   for(let i=0;i<paths.length;i+=500)await admin.storage.from(BUCKET).remove(paths.slice(i,i+500));
   await admin.from('web_sessions').delete().in('id',ids);
   removed+=ids.length;
@@ -145,9 +149,9 @@ Deno.serve(async(req)=>{
   if(b.action==='playback'){
    const id=String(b.session_id||'');if(!UUID.test(id))throw new Error('Unknown visit');
    const {data:visible}=await db.from('web_sessions').select('id').eq('id',id).maybeSingle();if(!visible)throw new Error('You do not have access to this visit.');
-   const {data:chunks,error}=await admin.from('web_session_chunks').select('seq,page,storage_path').eq('session_id',id).order('seq');if(error)throw error;
+   const {data:chunks,error}=await admin.from('web_session_chunks').select('seq,page,storage_path').eq('session_id',id).order('seq');if(error)throw new Error(error.message);
    if(!chunks?.length)throw new Error('This visit has no recording.');
-   const {data:signed,error:se}=await admin.storage.from(BUCKET).createSignedUrls(chunks.map((c:any)=>c.storage_path),3600);if(se)throw se;
+   const {data:signed,error:se}=await admin.storage.from(BUCKET).createSignedUrls(chunks.map((c:any)=>c.storage_path),3600);if(se)throw new Error(se.message);
    return json({ok:true,chunks:chunks.map((c:any,i:number)=>({seq:c.seq,page:c.page,url:signed?.[i]?.signedUrl||null}))});
   }
   return json({error:'Unknown action'},400);

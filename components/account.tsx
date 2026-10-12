@@ -26,8 +26,8 @@ export function Admins({supabase,me}:{supabase:any;me:any}){
     </div>
     <div className="reportPanel">
       <h2>Admins</h2>
-      {!rows?<p className="employeeMuted">Loading…</p>:<table className="reportTable"><tbody>{rows.map(a=><tr key={a.user_id}><td>{a.email}{a.user_id===me?.id?" (you)":""}</td><td className="employeeMuted">added {when(a.added_at)}</td>
-        <td className="num">{a.user_id!==me?.id&&<button type="button" className="employeeLinkButton" disabled={busy} onClick={()=>{if(window.confirm(`Remove ${a.email} as an Insights admin? They keep access to any websites they're invited to.`))void run({action:"remove_admin",user_id:a.user_id},`Removed ${a.email}.`)}}>Remove</button>}</td></tr>)}</tbody></table>}
+      {!rows?<p className="employeeMuted">Loading…</p>:<table className="reportTable"><tbody>{rows.map(a=><tr key={a.email}><td>{a.email}{String(a.email).toLowerCase()===String(me?.email||"").toLowerCase()?" (you)":""}</td><td className="employeeMuted">added {when(a.added_at)}{a.user_id?"":" · hasn't signed in yet"}</td>
+        <td className="num">{String(a.email).toLowerCase()!==String(me?.email||"").toLowerCase()&&<button type="button" className="employeeLinkButton" disabled={busy} onClick={()=>{if(window.confirm(`Remove ${a.email} as an Insights admin? They keep access to any websites they're invited to.`))void run({action:"remove_admin",email:a.email},`Removed ${a.email}.`)}}>Remove</button>}</td></tr>)}</tbody></table>}
     </div>
   </section>;
 }

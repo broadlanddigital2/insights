@@ -17,8 +17,8 @@ export default function Insights(){
     await supabase.rpc("insights_claim_invites");
     const [{data:s},{data:me}]=await Promise.all([supabase.rpc("insights_my_sites"),supabase.rpc("insights_me")]);
     setSites(s||[]);const admin=!!me?.admin;setCrmAdmin(admin);
-    // Our own CRM businesses (only readable by CRM staff), to link our own websites' enquiries to visits.
-    if(admin){const {data:b}=await supabase.from("business_units").select("id,name").eq("is_active",true).order("name");setBusinesses(b||[])}
+    // Our own CRM businesses, to link our own websites' enquiries to visits (admins only).
+    if(admin){const {data:b}=await supabase.from("crm_businesses").select("id,name").order("name");setBusinesses(b||[])}
     const sp=new URLSearchParams(location.search),q=sp.get("site");if(q)setOpen(q);else if(sp.get("add")&&admin)setAdding(true);else if((s||[]).length===1)setOpen(s[0].id);
   }
   useEffect(()=>{void load();const {data:sub}=supabase.auth.onAuthStateChange((e:string)=>{if(e==="SIGNED_IN"||e==="SIGNED_OUT")void load()});return()=>sub.subscription.unsubscribe()},[]);

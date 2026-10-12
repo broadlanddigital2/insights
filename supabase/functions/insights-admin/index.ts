@@ -13,7 +13,7 @@
 //  resend           – site managers: send the invitation email again
 //  check_install    – site managers: is the tracking code on the website, and are visits arriving?
 //  open_link        – anyone signed in (e.g. from the CRM): a one-time link that signs them into the Insights app
-import {createClient} from 'npm:@supabase/supabase-js@2.57.4';
+import {createClient} from './supa.ts';
 
 const SUPABASE_URL=Deno.env.get('SUPABASE_URL')||'';
 const SERVICE_ROLE_KEY=Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')||'';
@@ -51,7 +51,7 @@ async function sendInvite(site:any,email:string,role:string,first:string,inviter
  // New people get an invitation (choose a password); people who already have a login get a one-click sign-in link.
  let link:any=null,isNew=true;
  const inv=await admin.auth.admin.generateLink({type:'invite',email,options:{data:{first_name:first||null},redirectTo:base+'/accept'}});
- if(inv.error){if(!/already|registered|exists/i.test(inv.error.message))throw inv.error;isNew=false;const ml=await admin.auth.admin.generateLink({type:'magiclink',email,options:{redirectTo:base}});if(ml.error)throw ml.error;link=ml.data;}
+ if(inv.error){if(!/already|registered|exists/i.test(inv.error.message))throw new Error(inv.error.message);isNew=false;const ml=await admin.auth.admin.generateLink({type:'magiclink',email,options:{redirectTo:base}});if(ml.error)throw new Error(ml.error.message);link=ml.data;}
  else{link=inv.data;
   // A new login made by Insights is for Insights only: the CRM won't let it in.
   }
@@ -103,12 +103,12 @@ Deno.serve(async(req)=>{
     const T:Record<string,string>={insight_sites:'id',insight_site_members:'id',web_sessions:'id',web_session_chunks:'session_id,seq',insight_users:'site_id,user_key',
       insight_pageviews:'id',marketing_funnels:'id',insight_charts:'id',crm_businesses:'id'};
     const table=String(b.table||'');if(!T[table]||!Array.isArray(b.rows))throw new Error('Bad import');
-    for(let i=0;i<b.rows.length;i+=500){const {error}=await admin.from(table).upsert(b.rows.slice(i,i+500),{onConflict:T[table]});if(error)throw error;}
+    for(let i=0;i<b.rows.length;i+=500){const {error}=await admin.from(table).upsert(b.rows.slice(i,i+500),{onConflict:T[table]});if(error)throw new Error(error.message);}
     return json({ok:true,table,rows:b.rows.length});
    }
    if(action==='bridge_import_events'){
     if(!Array.isArray(b.rows))throw new Error('Bad import');
-    for(let i=0;i<b.rows.length;i+=500){const {error}=await admin.from('insight_events').insert(b.rows.slice(i,i+500).map((r:any)=>{const {id,...x}=r;return x;}));if(error)throw error;}
+    for(let i=0;i<b.rows.length;i+=500){const {error}=await admin.from('insight_events').insert(b.rows.slice(i,i+500).map((r:any)=>{const {id,...x}=r;return x;}));if(error)throw new Error(error.message);}
     return json({ok:true,rows:b.rows.length});
    }
    if(action==='bridge_lead'){
@@ -128,12 +128,12 @@ Deno.serve(async(req)=>{
    const {data:mem}=await admin.from('insight_site_members').select('site_id').ilike('email',email);
    if(!isAdmin&&!(mem||[]).length)throw new Error('You do not have access to Insights. Ask an Insights admin to invite you.');
    if(action==='bridge_summary'){
-    const {data,error}=await admin.rpc('insights_bridge_summary',{p_email:email,p_admin:!!isAdmin});if(error)throw error;
+    const {data,error}=await admin.rpc('insights_bridge_summary',{p_email:email,p_admin:!!isAdmin});if(error)throw new Error(error.message);
     return json({ok:true,sites:data||[]});
    }
    if(action==='bridge_sso'){
     let ml=await admin.auth.admin.generateLink({type:'magiclink',email});
-    if(ml.error){const c=await admin.auth.admin.createUser({email,email_confirm:true});if(c.error)throw c.error;ml=await admin.auth.admin.generateLink({type:'magiclink',email});if(ml.error)throw ml.error;}
+    if(ml.error){const c=await admin.auth.admin.createUser({email,email_confirm:true});if(c.error)throw new Error(c.error.message);ml=await admin.auth.admin.generateLink({type:'magiclink',email});if(ml.error)throw new Error(ml.error.message);}
     const site=UUID.test(String(b.site_id||''))?String(b.site_id):'';
     const next=/^\/(?!\/)[\w\-/?=&.%]*$/.test(String(b.next||''))?String(b.next):site?'/?site='+site:'';
     return json({ok:true,url:(await appUrl())+'/accept?token_hash='+encodeURIComponent(ml.data.properties.hashed_token)+'&type=magiclink'+(next?'&next='+encodeURIComponent(next):'')});
@@ -150,7 +150,7 @@ Deno.serve(async(req)=>{
    const plan=clean(b.plan,20)||'starter';
    const row:any={name,domains:d,plan,owner_name:clean(b.owner_name,120)||null,consent_mode:b.consent_mode==='auto'?'auto':'wait',business_unit_id:UUID.test(String(b.business_unit_id||''))?b.business_unit_id:null,created_by:user.id,
     session_limit:b.session_limit===''||b.session_limit==null?null:Math.max(0,Math.round(Number(b.session_limit))),retention_days:b.retention_days===''||b.retention_days==null?null:Math.min(730,Math.max(7,Math.round(Number(b.retention_days))))};
-   const {data:site,error}=await admin.from('insight_sites').insert(row).select('*').single();if(error)throw error;
+   const {data:site,error}=await admin.from('insight_sites').insert(row).select('*').single();if(error)throw new Error(error.message);
    let invited:any=null;
    const owner=clean(b.owner_email,200).toLowerCase();
    if(owner){if(!EMAIL.test(owner))throw new Error('The owner email is not valid');
@@ -165,20 +165,20 @@ Deno.serve(async(req)=>{
     const sent=await sendInvite({name:'Insights administration',domains:['all websites']},email,'manager',clean(b.first_name,80),user);
     let id=sent.user_id;
     if(!id){const {data:list}=await admin.auth.admin.listUsers({page:1,perPage:1000});id=(list?.users||[]).find((u:any)=>String(u.email||'').toLowerCase()===email)?.id||null;}
-    const {error}=await admin.from('insight_admins').upsert({email,user_id:id,added_by:user.id},{onConflict:'email'});if(error)throw error;
+    const {error}=await admin.from('insight_admins').upsert({email,user_id:id,added_by:user.id},{onConflict:'email'});if(error)throw new Error(error.message);
    }
    if(action==='remove_admin'){
     const em=clean(b.email,200).toLowerCase();if(em===String(user.email||'').toLowerCase())throw new Error('You cannot remove yourself');
     const {count}=await admin.from('insight_admins').select('email',{count:'exact',head:true});if((count||0)<=1)throw new Error('Insights needs at least one admin');
-    const {error}=await admin.from('insight_admins').delete().eq('email',em);if(error)throw error;
+    const {error}=await admin.from('insight_admins').delete().eq('email',em);if(error)throw new Error(error.message);
    }
-   const {data,error}=await admin.from('insight_admins').select('user_id,email,added_at').order('added_at');if(error)throw error;
+   const {data,error}=await admin.from('insight_admins').select('user_id,email,added_at').order('added_at');if(error)throw new Error(error.message);
    // (user_id is only set once they've signed in; the app keys rows by email)
    return json({ok:true,admins:data});
   }
   if(action==='update_account'){
    const first=clean(b.first_name,80),last=clean(b.last_name,80);
-   const {error}=await admin.auth.admin.updateUserById(user.id,{user_metadata:{first_name:first||null,last_name:last||null}});if(error)throw error;
+   const {error}=await admin.auth.admin.updateUserById(user.id,{user_metadata:{first_name:first||null,last_name:last||null}});if(error)throw new Error(error.message);
    return json({ok:true});
   }
   // "Open in Insights" from the CRM: the Insights app is on its own domain with its own sign-in, so hand over with a
@@ -186,7 +186,7 @@ Deno.serve(async(req)=>{
   if(action==='open_link'){
    if(!user.email)throw new Error('Your login has no email address');
    if(!user.crmAdmin){const {count}=await admin.from('insight_site_members').select('id',{count:'exact',head:true}).eq('user_id',user.id);if(!count)throw new Error('You do not have access to Insights');}
-   const ml=await admin.auth.admin.generateLink({type:'magiclink',email:user.email});if(ml.error)throw ml.error;
+   const ml=await admin.auth.admin.generateLink({type:'magiclink',email:user.email});if(ml.error)throw new Error(ml.error.message);
    const site=UUID.test(String(b.site_id||''))?String(b.site_id):'';
    const base=await appUrl();
    const next=/^\/(?!\/)[\w\-/?=&.%]*$/.test(String(b.next||''))?String(b.next):site?'/?site='+site:'';
@@ -210,13 +210,13 @@ Deno.serve(async(req)=>{
     if(b.is_active!==undefined)patch.is_active=!!b.is_active;
     if(b.business_unit_id!==undefined)patch.business_unit_id=UUID.test(String(b.business_unit_id||''))?b.business_unit_id:null;
    }
-   const {data,error}=await admin.from('insight_sites').update(patch).eq('id',siteId).select('*').single();if(error)throw error;return json({ok:true,site:data});
+   const {data,error}=await admin.from('insight_sites').update(patch).eq('id',siteId).select('*').single();if(error)throw new Error(error.message);return json({ok:true,site:data});
   }
-  if(action==='new_key'){const {data,error}=await admin.from('insight_sites').update({site_key:crypto.randomUUID(),updated_at:new Date().toISOString()}).eq('id',siteId).select('site_key').single();if(error)throw error;return json({ok:true,site_key:data.site_key});}
+  if(action==='new_key'){const {data,error}=await admin.from('insight_sites').update({site_key:crypto.randomUUID(),updated_at:new Date().toISOString()}).eq('id',siteId).select('site_key').single();if(error)throw new Error(error.message);return json({ok:true,site_key:data.site_key});}
   if(action==='invite'||action==='resend'){
    const email=clean(b.email,200).toLowerCase();if(!EMAIL.test(email))throw new Error('Enter a valid email address');
    const r=action==='invite'?(b.role==='manager'?'manager':'viewer'):undefined;
-   if(action==='invite'){const {error}=await admin.from('insight_site_members').upsert({site_id:siteId,email,role:r,invited_by:user.id,invited_at:new Date().toISOString()},{onConflict:'site_id,email'});if(error)throw error;}
+   if(action==='invite'){const {error}=await admin.from('insight_site_members').upsert({site_id:siteId,email,role:r,invited_by:user.id,invited_at:new Date().toISOString()},{onConflict:'site_id,email'});if(error)throw new Error(error.message);}
    const {data:m}=await admin.from('insight_site_members').select('role,user_id').eq('site_id',siteId).eq('email',email).maybeSingle();if(!m)throw new Error('That person is not on this site');
    const sent=await sendInvite(site,email,m.role,clean(b.first_name,80),user);
    if(sent.user_id&&!m.user_id)await admin.from('insight_site_members').update({user_id:sent.user_id}).eq('site_id',siteId).eq('email',email);
@@ -238,11 +238,11 @@ Deno.serve(async(req)=>{
    const {count}=await admin.from('web_sessions').select('id',{count:'exact',head:true}).eq('site_id',siteId).gte('started_at',since);
    return json({ok:true,pages,last_visit:last?.started_at||null,last_host:last?.host||null,visits_24h:count||0,consent_mode:site.consent_mode});
   }
-  if(action==='set_role'){const {error}=await admin.from('insight_site_members').update({role:b.role==='manager'?'manager':'viewer'}).eq('site_id',siteId).eq('id',clean(b.member_id,80));if(error)throw error;return json({ok:true});}
+  if(action==='set_role'){const {error}=await admin.from('insight_site_members').update({role:b.role==='manager'?'manager':'viewer'}).eq('site_id',siteId).eq('id',clean(b.member_id,80));if(error)throw new Error(error.message);return json({ok:true});}
   if(action==='remove_member'){
    const {data:m}=await admin.from('insight_site_members').select('id,user_id').eq('site_id',siteId).eq('id',clean(b.member_id,80)).maybeSingle();if(!m)throw new Error('Member not found');
    if(m.user_id===user.id&&role!=='admin')throw new Error('You cannot remove yourself');
-   const {error}=await admin.from('insight_site_members').delete().eq('id',m.id);if(error)throw error;return json({ok:true});
+   const {error}=await admin.from('insight_site_members').delete().eq('id',m.id);if(error)throw new Error(error.message);return json({ok:true});
   }
   return json({error:'Unknown action'},400);
  }catch(e:any){return json({error:String(e?.message||e)},400);}

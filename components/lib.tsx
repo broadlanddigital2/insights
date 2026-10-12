@@ -2,7 +2,7 @@
 import {useEffect,useRef,useState} from "react";
 
 // Shared bits for the Insights screens: formatting, people/location labels, and small SVG charts.
-export const REC=(process.env.NEXT_PUBLIC_SUPABASE_URL||"https://dipjypzrfigkzuarlsov.supabase.co")+"/functions/v1/web-recorder";
+export const REC=(process.env.NEXT_PUBLIC_SUPABASE_URL||"https://gbxjvsrgqcomkjxakbso.supabase.co")+"/functions/v1/web-recorder";
 export const num=(n:any)=>Number(n||0).toLocaleString("en-GB");
 export const pct=(a:any,b:any)=>Number(b)>0?Math.round(Number(a||0)/Number(b)*100)+"%":"–";
 export const dur=(s:number)=>{s=Math.round(Number(s)||0);return s>=3600?Math.floor(s/3600)+"h "+Math.floor(s%3600/60)+"m":s>=60?Math.floor(s/60)+"m "+(s%60)+"s":s+"s"};
