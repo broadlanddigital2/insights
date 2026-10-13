@@ -66,7 +66,7 @@ export function eventLine(e:any){
   switch(e.name){
     case "$click":return "Clicked "+(p.text?"“"+p.text+"”":p.tag||"something")+(p.href?" → "+shortUrl(p.href):"");
     case "$rage_click":return "Rage-clicked "+(p.text?"“"+p.text+"”":p.tag||"");
-    case "$form_submit":return "Sent a form"+(p.id||p.name?" ("+(p.id||p.name)+")":"");
+    case "$form_submit":{const nm=p.id||p.name?" ("+(p.id||p.name)+")":"";return p.kind==="search"?"Searched"+nm:p.kind==="newsletter"?"Newsletter sign-up"+nm:p.kind==="login"?"Signed in"+nm:p.kind==="other"?"Sent a form (not an enquiry)"+nm:"Sent a form"+nm;}
     case "$error":return (p.level==="network"?"Network error: ":"Error: ")+(p.message||"");
     case "$outbound":return "Left to "+shortUrl(p.href);
     case "$download":return "Downloaded "+shortUrl(p.href);

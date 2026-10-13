@@ -156,14 +156,31 @@
     event("$click", d);
     if (d.href) { try { var u = new URL(d.href); if (u.host && u.host !== location.host && /^https?:/.test(u.protocol)) event("$outbound", { href: d.href, text: d.text }); if (/\.(pdf|zip|docx?|xlsx?|csv|mp4)(\?|$)/i.test(u.pathname)) event("$download", { href: d.href }); } catch (e) {} if (/^mailto:/.test(d.href)) event("$email_click", { href: d.href }); if (/^tel:/.test(d.href)) event("$phone_click", { href: d.href }); }
   }, true);
+  // What a submitted form is: search, login, newsletter, enquiry (has an email, phone or message field) or other.
+  function formKind(f) {
+    try {
+      var label = ((f.id || "") + " " + (f.getAttribute("name") || "") + " " + (f.getAttribute("action") || "") + " " + (f.className || "") + " " + (f.getAttribute("role") || "")).toLowerCase();
+      var fields = [].slice.call(f.elements || []).filter(function (e) { return e.type !== "hidden" && e.type !== "submit" && e.type !== "button" && e.tagName !== "FIELDSET"; });
+      var has = function (sel) { return !!f.querySelector(sel); };
+      if (/search/.test(label) || has('input[type="search"]') || (fields.length <= 2 && has('input[name="q"],input[name="s"]'))) return "search";
+      if (has('input[type="password"]')) return "login";
+      var email = has('input[type="email"],input[name*="email" i]'), tel = has('input[type="tel"],input[name*="phone" i],input[name*="mobile" i]'), msg = has("textarea");
+      if (/newsletter|subscribe|mailing/.test(label) || (email && !tel && !msg && fields.length <= 2)) return "newsletter";
+      if (email || tel || msg || /enquir|contact|quote|booking/.test(label)) return "enquiry";
+      return "other";
+    } catch (e) { return "other"; }
+  }
   document.addEventListener("submit", function (ev) {
     var f = ev.target; if (!f || f.tagName !== "FORM") return;
     var add = function (n, v) { if (!v || f.querySelector('input[name="' + n + '"]')) return; var i = document.createElement("input"); i.type = "hidden"; i.name = n; i.value = v; f.appendChild(i); };
     var a = adClick(); if (a) TRACK.forEach(function (k) { add(k, a[k]); });
     if (!state) return;
     add("insights_visit", state.sid);
-    counters.form = true;
-    event("$form_submit", { id: f.id || null, name: f.getAttribute("name") || null, action: clip(f.getAttribute("action"), 200), fields: f.elements ? f.elements.length : null });
+    // Only enquiry-type forms count as "Sent a form" on the visit; searches, newsletter sign-ups and logins are
+    // recorded as their own kind of form event.
+    var kind = formKind(f);
+    if (kind === "enquiry") counters.form = true;
+    event("$form_submit", { kind: kind, id: f.id || null, name: f.getAttribute("name") || null, action: clip(f.getAttribute("action"), 200), fields: f.elements ? f.elements.length : null });
     flush(true);
   }, true);
   // Single-page apps: count each route change as a page view.

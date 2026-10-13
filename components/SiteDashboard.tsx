@@ -168,7 +168,7 @@ function SiteSetup({supabase,site,crmAdmin,onChanged}:any){
         <pre className="insCode">{`Insights.identify("customer-123", { email: "jo@example.com", name: "Jo Bloggs" })
 Insights.track("Quote requested", { service: "Full wrap" })
 Insights.reset()   // when they sign out`}</pre>
-        <p>Clicks, rage clicks, forms, downloads, outbound/phone/email links, JavaScript errors and page speed (Core Web Vitals) are collected automatically. Add <code>data-replay="off"</code> to the script tag to collect analytics without screen recordings.</p></div>
+        <p>"Sent a form" counts enquiry forms only (forms with an email, phone or message field); searches, newsletter sign-ups and logins are recorded separately. The CRM booking form reports its own steps: Booking started, Checkout opened, Booking paid, Package visit booked and Urgent request sent. Clicks, rage clicks, downloads, outbound/phone/email links, JavaScript errors and page speed (Core Web Vitals) are collected automatically. Add <code>data-replay="off"</code> to the script tag to collect analytics without screen recordings.</p></div>
       <p className="insHelp">Typing in forms is always hidden. Add <code>data-private</code> to any element to hide its text, or <code>data-no-record</code> to leave it out completely. Console errors, warnings and failed requests are recorded with each visit.</p>
         </Panel>
     <Panel title="Usage" note="Visits recorded this calendar month">
