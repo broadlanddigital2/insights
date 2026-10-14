@@ -543,3 +543,9 @@ button.rumStat:hover{border-color:var(--r-line2)}
 .rumExport{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
 .rumExport button{background:var(--r-panel);border:1px solid var(--r-line2);color:var(--r-strong);border-radius:8px;padding:6px 11px;font:600 12px inherit;cursor:pointer;white-space:nowrap}
 .rumExport button:hover{border-color:var(--r-acc)}
+.webPlayerMain{min-width:0}
+.webSpeed{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:10px;padding:8px 10px;border:1px solid #e2e6e9;border-radius:10px;background:#fff}
+.webSpeed>span{font:700 12px Arial,sans-serif;color:#4a555c;margin-right:2px}
+.webSpeed button{border:1px solid #e2e6e9;background:#f6f8f9;border-radius:999px;padding:5px 12px;font:700 12.5px Arial,sans-serif;cursor:pointer;min-width:44px}
+.webSpeed button.active{background:#182127;color:#fff;border-color:#182127}
+.webSpeed .jobCheck{margin-left:auto;font-size:12.5px}

@@ -25,6 +25,10 @@ async function inflate(url:string){
 export function Player({supabase,visit,name,onClose}:any){
   const [msg,setMsg]=useState("Loading the recording…"),[host,setHost]=useState<HTMLDivElement|null>(null);
   const [logs,setLogs]=useState<any[]>([]),[pages,setPages]=useState<any[]>([]),[acts,setActs]=useState<any[]>([]),[side,setSide]=useState("events"),[level,setLevel]=useState("problems"),[now,setNow]=useState(0),[clicks,setClicks]=useState(false);
+  // Playback speed (1×–8×) and skipping idle time; both remembered in this browser.
+  const SPEEDS=[1,2,3,4,8];
+  const [speed,setSpeedState]=useState<number>(()=>{try{const v=Number(localStorage.getItem("ins-speed"));return SPEEDS.includes(v)?v:1}catch{return 1}});
+  const [skip,setSkip]=useState<boolean>(()=>{try{return localStorage.getItem("ins-skip")!=="off"}catch{return true}});
   const pl=useRef<any>(null),start=useRef(0);
   useEffect(()=>{if(!host)return;let alive=true,player:any=null,timer:any=null;
     (async()=>{try{
@@ -37,13 +41,15 @@ export function Player({supabase,visit,name,onClose}:any){
       setPages(events.filter((e:any)=>e.type===4&&e.data?.href).map((e:any)=>({at:e.timestamp-t0,href:e.data.href,size:e.data.width+"×"+e.data.height})));
       setActs((ev.data||[]).filter((e:any)=>e.name!=="$pageview").map((e:any)=>({...e,at:new Date(e.ts).getTime()-t0})));
       const w=Math.min(host.clientWidth||900,1000);
-      player=new P({target:host,props:{events,width:w,height:Math.round(w*0.56),autoPlay:true,skipInactive:true,showController:true,mouseTail:{strokeStyle:"#e21a22"}}});
+      player=new P({target:host,props:{events,width:w,height:Math.round(w*0.56),autoPlay:true,skipInactive:skip,speed,speedOption:SPEEDS,showController:true,mouseTail:{strokeStyle:"#e21a22"}}});
       pl.current=player;
       try{player.addEventListener?.("ui-update-current-time",(e:any)=>setNow(Number(e?.payload)||0))}catch{}
       timer=setInterval(()=>{try{const r=player.getReplayer?.();if(r)setNow(r.getCurrentTime())}catch{}},500);
       setMsg("");
     }catch(e:any){if(alive)setMsg(e.message)}})();
     return()=>{alive=false;clearInterval(timer);try{player?.$destroy?.()}catch{}}},[host,visit.id]);
+  function changeSpeed(v:number){setSpeedState(v);try{localStorage.setItem("ins-speed",String(v))}catch{};try{pl.current?.setSpeed?.(v)}catch{}}
+  function changeSkip(on:boolean){setSkip(on);try{localStorage.setItem("ins-skip",on?"on":"off")}catch{};try{const P=pl.current;if(P?.toggleSkipInactive)P.toggleSkipInactive();else P?.getReplayer?.()?.setConfig?.({skipInactive:on})}catch{}}
   const jump=(ms:number)=>{try{pl.current?.goto?.(Math.max(0,ms-1500),true)}catch{}};
   const shown=logs.filter(l=>level==="all"||(level==="problems"?["error","warn","network"].includes(l.level):l.level===level));
   const counts={error:logs.filter(l=>l.level==="error").length,warn:logs.filter(l=>l.level==="warn").length,network:logs.filter(l=>l.level==="network").length};
@@ -61,7 +67,13 @@ export function Player({supabase,visit,name,onClose}:any){
       <button type="button" className="secondaryButton" onClick={onClose}>CLOSE</button></header>
     {msg&&<p className={msg.startsWith("Loading")?"employeeMuted":"crmNotice"}>{msg}</p>}
     <div className="webPlayerLayout">
-      <div ref={setHost} className="webPlayerStage"/>
+      <div className="webPlayerMain">
+        <div ref={setHost} className="webPlayerStage"/>
+        {!msg&&<div className="webSpeed" role="group" aria-label="Playback speed">
+          <span>Speed</span>{SPEEDS.map(v=><button key={v} type="button" className={speed===v?"active":""} aria-pressed={speed===v} onClick={()=>changeSpeed(v)}>{v}×</button>)}
+          <label className="jobCheck"><input type="checkbox" checked={skip} onChange={e=>changeSkip(e.target.checked)}/>Skip idle time</label>
+        </div>}
+      </div>
       <aside className="webPlayerSide">
         <div className="employeesTabs" role="tablist">{[["events","Events"],["console","Console"+(counts.error+counts.network?" ("+(counts.error+counts.network)+")":"")],["pages","Pages"],["details","Details"]].map(([k,l])=><button key={k} role="tab" aria-selected={side===k} className={side===k?"active":""} onClick={()=>setSide(k)}>{l}</button>)}</div>
         {side==="events"&&<>
