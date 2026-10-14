@@ -373,7 +373,7 @@ declare f timestamptz; t timestamptz;
 begin
   if not private.insight_can_view(p_site) then raise exception 'You do not have access to this site'; end if;
   select x.f, x.t into f, t from private.insights_range(p_from, p_to) x;
-  return (with ev as (select e.*, coalesce(nullif(left(e.props->>'message', 300), ''), '(no message)') msg, coalesce(e.props->>'level', 'error') lvl, s.browser, s.os, s.device
+  return (with ev as (select e.*, coalesce(nullif(left(e.props->>'message', 500), ''), '(no message)') msg, coalesce(e.props->>'level', 'error') lvl, s.browser, s.os, s.device
                         from public.insight_events e join public.web_sessions s on s.id = e.session_id
                        where e.site_id = p_site and e.name = '$error' and e.ts >= f and e.ts < t)
     select jsonb_build_object(
@@ -384,7 +384,11 @@ begin
           select msg message, lvl level, count(*) count, count(distinct session_id) sessions, count(distinct user_key) users, min(ts) first_seen, max(ts) last_seen,
                  mode() within group (order by path) top_path, mode() within group (order by browser) top_browser,
                  (array_agg(props->>'trace' order by ts desc) filter (where props->>'trace' is not null))[1] trace,
-                 (array_agg(session_id order by ts desc))[1:10] recent_sessions
+                 (array_agg(session_id order by ts desc))[1:10] recent_sessions,
+                 (select jsonb_agg(jsonb_build_object('path', pth, 'count', n) order by n desc) from (
+                    select coalesce(e2.path, '(unknown)') pth, count(*) n from ev e2 where e2.msg = ev.msg and e2.lvl = ev.lvl group by 1 order by 2 desc limit 5) p5) pages,
+                 (select jsonb_agg(jsonb_build_object('browser', b, 'count', n) order by n desc) from (
+                    select concat_ws(' · ', e2.browser, e2.os, e2.device) b, count(*) n from ev e2 where e2.msg = ev.msg and e2.lvl = ev.lvl group by 1 order by 2 desc limit 5) b5) browsers
             from ev group by msg, lvl order by count(*) desc limit 100) z)));
 end $fn$;
 

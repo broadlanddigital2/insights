@@ -122,16 +122,53 @@ export function Performance({supabase,site,from,to}:any){
   </>;
 }
 
+// Errors export: everything needed to fix each error (message, where and in which browsers it happens, stack trace,
+// example sessions) as a Markdown report to paste into a ticket or an AI coding assistant, or as a CSV for a spreadsheet.
+const lvlName=(l:string)=>l==="network"?"Network":l==="warn"?"Warning":"Error";
+const whenAt=(v:string)=>v?new Date(v).toLocaleString("en-GB",{day:"numeric",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"}):"";
+function errorsMarkdown(site:any,from:string,to:string,d:any){
+  const domain=(site.domains||[])[0]||"";
+  const out=["# Errors on "+(site.name||domain)+(domain&&site.name!==domain?" ("+domain+")":""),"",
+    from+" to "+to+" · "+num(d.total)+" errors · "+num((d.groups||[]).length)+" distinct · "+num(d.sessions)+" sessions · "+num(d.users)+" users affected","",
+    "Captured by Insights from visitors' browsers: JavaScript errors, unhandled promise rejections, console.error calls, and failed network requests (images, scripts and fetch calls that returned 4xx/5xx). Most frequent first.",""];
+  (d.groups||[]).forEach((g:any,i:number)=>{
+    out.push("## "+(i+1)+". ["+lvlName(g.level)+"] "+g.message.replace(/\s+/g," ").slice(0,160),"");
+    out.push("- **Occurrences:** "+num(g.count)+" in "+num(g.sessions)+" sessions ("+num(g.users)+" users)");
+    out.push("- **First / last seen:** "+whenAt(g.first_seen)+" / "+whenAt(g.last_seen));
+    if((g.pages||[]).length)out.push("- **Pages:** "+g.pages.map((p:any)=>(domain?"https://"+domain:"")+p.path+" ("+num(p.count)+")").join(", "));
+    if((g.browsers||[]).length)out.push("- **Browsers:** "+g.browsers.map((b:any)=>(b.browser||"Unknown")+" ("+num(b.count)+")").join(", "));
+    if((g.recent_sessions||[]).length)out.push("- **Example sessions (replay in Insights):** "+g.recent_sessions.slice(0,3).map((x:string)=>x.slice(0,8)).join(", "));
+    if(g.message.length>160)out.push("","Full message:","","```",g.message,"```");
+    out.push("",g.trace?"Stack trace:\n\n```\n"+g.trace+"\n```":"_No stack trace was captured._","");
+  });
+  return out.join("\n");
+}
+function errorsCsv(site:any,d:any){
+  const q=(v:any)=>{const t=String(v??"");return /[",\n]/.test(t)?'"'+t.replace(/"/g,'""')+'"':t};
+  const head=["Type","Message","Occurrences","Sessions","Users","First seen","Last seen","Top pages","Browsers","Stack trace","Example sessions"];
+  const rows=(d.groups||[]).map((g:any)=>[lvlName(g.level),g.message,g.count,g.sessions,g.users,g.first_seen,g.last_seen,(g.pages||[]).map((p:any)=>p.path+" ("+p.count+")").join("; "),(g.browsers||[]).map((b:any)=>b.browser+" ("+b.count+")").join("; "),g.trace||"",(g.recent_sessions||[]).join("; ")]);
+  return "\uFEFF"+[head,...rows].map(r=>r.map(q).join(",")).join("\r\n");
+}
+function saveFile(name:string,text:string,type:string){const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([text],{type}));a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}
+
 export function Errors({supabase,site,from,to}:any){
   const [d,setD]=useState<any>(null),[openG,setOpenG]=useState<number|null>(null),[open,setOpen]=useState<any>(null),[notice,setNotice]=useState("");
   useEffect(()=>{setD(null);rpc(supabase,"insights_errors",{p_site:site.id,p_from:from,p_to:to}).then(setD).catch(e=>setNotice(e.message))},[site.id,from,to]);
   async function openSession(id:string){const {data}=await supabase.from("web_sessions").select("*").eq("id",id).maybeSingle();if(data)setOpen(data)}
+  const [copied,setCopied]=useState(false);
+  const fileBase="errors-"+String((site.domains||[])[0]||site.name||"site").replace(/[^a-z0-9.-]+/gi,"-").toLowerCase()+"-"+from+"-to-"+to;
+  async function copyReport(){try{await navigator.clipboard.writeText(errorsMarkdown(site,from,to,d));setCopied(true);setTimeout(()=>setCopied(false),2500)}catch{saveFile(fileBase+".md",errorsMarkdown(site,from,to,d),"text/markdown")}}
   if(notice)return <p className="rumNotice">{notice}</p>;
   if(!d)return <Nothing text="Loading…"/>;
   return <>
     <div className="rumStats"><Stat label="Errors" value={num(d.total)} tone={d.total?"bad":""}/><Stat label="Distinct errors" value={num((d.groups||[]).length)}/><Stat label="Sessions affected" value={num(d.sessions)}/><Stat label="Users affected" value={num(d.users)}/></div>
     <Card title="Errors by day"><TimeChart rows={d.daily||[]} series={[{key:"count",label:"Errors",color:C.poor}]}/></Card>
-    <Card title="Errors" note="Grouped by message — JavaScript errors, failed network requests and console errors" className="flush">
+    <Card title="Errors" note="Grouped by message — JavaScript errors, failed network requests and console errors" className="flush"
+      right={(d.groups||[]).length?<div className="rumExport">
+        <button type="button" onClick={()=>void copyReport()} title="Copy a Markdown report to paste into a ticket or an AI coding assistant">{copied?"Copied ✓":"Copy for fixing"}</button>
+        <button type="button" onClick={()=>saveFile(fileBase+".md",errorsMarkdown(site,from,to,d),"text/markdown")}>Download report</button>
+        <button type="button" onClick={()=>saveFile(fileBase+".csv",errorsCsv(site,d),"text/csv")}>Download CSV</button>
+      </div>:undefined}>
       {!(d.groups||[]).length?<Nothing text="No errors in this range. 🎉"/>:<ul className="rumErrors">{d.groups.map((g:any,i:number)=><li key={i} className={openG===i?"open":""}>
         <button type="button" onClick={()=>setOpenG(openG===i?null:i)}>
           <span className={"rumLevel "+g.level}>{g.level==="network"?"Network":g.level==="warn"?"Warning":"Error"}</span>

@@ -540,3 +540,6 @@ button.rumStat:hover{border-color:var(--r-line2)}
 .insInline{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end}
 .insInline label{flex:1;min-width:200px}
 .insUser .employeeLinkButton+.employeeLinkButton{margin-left:10px}
+.rumExport{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.rumExport button{background:var(--r-panel);border:1px solid var(--r-line2);color:var(--r-strong);border-radius:8px;padding:6px 11px;font:600 12px inherit;cursor:pointer;white-space:nowrap}
+.rumExport button:hover{border-color:var(--r-acc)}
