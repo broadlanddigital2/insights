@@ -45,8 +45,18 @@ async function roleOn(user:any,siteId:string){
  return data?.role||null;
 }
 
+// Emails go out with this project's own SendGrid key if one is ever set (SENDGRID_API_KEY); otherwise the CRM sends them
+// for us with its key (CRM insights-admin, bridge_email, same shared secret as the other bridge calls). 26 Nov 2026.
+const CRM_BRIDGE='https://dipjypzrfigkzuarlsov.supabase.co/functions/v1/insights-admin';
+async function sendMail(m:{to:string;subject:string;text:string;html:string;reply_to?:string}){
+ const key=Deno.env.get('SENDGRID_API_KEY');
+ if(key){const r=await fetch('https://api.sendgrid.com/v3/mail/send',{method:'POST',headers:{Authorization:'Bearer '+key,'Content-Type':'application/json'},body:JSON.stringify({personalizations:[{to:[{email:m.to}]}],from:{email:'noreply@racecargraphics.uk',name:'Insights'},reply_to:m.reply_to?{email:m.reply_to}:undefined,subject:m.subject,content:[{type:'text/plain',value:m.text},{type:'text/html',value:m.html}]})});
+  if(!r.ok)throw new Error('SendGrid '+r.status+': '+(await r.text()).slice(0,200));return;}
+ const secret=await setting('bridge_secret');if(!secret)throw new Error('Email is not configured (no bridge secret)');
+ const r=await fetch(CRM_BRIDGE,{method:'POST',headers:{'Content-Type':'application/json','x-insights-secret':secret},body:JSON.stringify({action:'bridge_email',from_name:'Insights',...m})});
+ const j=await r.json().catch(()=>({}));if(!r.ok||j.error)throw new Error(j.error||('CRM email bridge '+r.status));
+}
 async function sendInvite(site:any,email:string,role:string,first:string,inviter:any,signInOnly=false){
- const key=Deno.env.get('SENDGRID_API_KEY');if(!key)throw new Error('Email is not configured');
  const base=await appUrl();
  // New people get an invitation (choose a password); people who already have a login get a one-click sign-in link.
  let link:any=null,isNew=true;
@@ -59,8 +69,8 @@ async function sendInvite(site:any,email:string,role:string,first:string,inviter
  const what=role==='manager'?'manage':'view';
  if(signInOnly){
   const html='<div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;margin:0 auto;color:#1d2329"><div style="background:#101820;padding:18px 24px;color:#fff;font-weight:bold;font-size:18px;letter-spacing:.04em">INSIGHTS</div><div style="padding:24px"><h1 style="font-size:22px;margin:0 0 12px">Your sign-in link</h1><p>Press the button to sign in to Insights'+(isNew?' and choose a password':'')+'. The link works once and expires after 24 hours.</p><p style="margin:24px 0"><a href="'+url+'" style="background:#e21a22;color:#fff;text-decoration:none;font-weight:bold;padding:12px 20px;border-radius:8px;display:inline-block">SIGN IN</a></p><p style="color:#68737b;font-size:13px">If you didn\'t ask for this, you can ignore it.</p></div></div>';
-  const r=await fetch('https://api.sendgrid.com/v3/mail/send',{method:'POST',headers:{Authorization:'Bearer '+key,'Content-Type':'application/json'},body:JSON.stringify({personalizations:[{to:[{email}]}],from:{email:'noreply@racecargraphics.uk',name:'Insights'},subject:'Your Insights sign-in link',content:[{type:'text/plain',value:'Sign in to Insights: '+url+'\n(The link works once and expires after 24 hours.)'},{type:'text/html',value:html}]})});
-  if(!r.ok)throw new Error('Email failed');return {user_id:link.user?.id||null,new_login:isNew};
+  await sendMail({to:email,subject:'Your Insights sign-in link',text:'Sign in to Insights: '+url+'\n(The link works once and expires after 24 hours.)',html});
+  return {user_id:link.user?.id||null,new_login:isNew};
  }
  const html='<div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;margin:0 auto;color:#1d2329"><div style="background:#101820;padding:18px 24px;color:#fff;font-weight:bold;font-size:18px;letter-spacing:.04em">INSIGHTS</div><div style="padding:24px">'
   +'<h1 style="font-size:22px;margin:0 0 12px">You\'ve been invited to '+esc(site.name)+'</h1>'
@@ -69,10 +79,8 @@ async function sendInvite(site:any,email:string,role:string,first:string,inviter
   +'<p style="margin:24px 0"><a href="'+url+'" style="background:#e21a22;color:#fff;text-decoration:none;font-weight:bold;padding:12px 20px;border-radius:8px;display:inline-block">'+(isNew?'ACCEPT AND SET PASSWORD':'OPEN INSIGHTS')+'</a></p>'
   +'<p>After that, sign in any time at <a href="'+base+'">'+esc(base.replace(/^https?:\/\//,''))+'</a> with '+esc(email)+'.</p><p style="color:#68737b;font-size:13px">If you weren\'t expecting this, you can ignore it.</p></div></div>';
  const text='You\'ve been invited to '+what+' '+site.name+' on Insights.\n\n'+(isNew?'Choose your password: ':'Sign in: ')+url+'\n(The link works once and expires after 24 hours.)\n\nAfter that, sign in at '+base+' with '+email+'.';
- const r=await fetch('https://api.sendgrid.com/v3/mail/send',{method:'POST',headers:{Authorization:'Bearer '+key,'Content-Type':'application/json'},
-  body:JSON.stringify({personalizations:[{to:[{email}]}],from:{email:'noreply@racecargraphics.uk',name:'Insights'},reply_to:inviter.email?{email:inviter.email}:undefined,
-   subject:'You\'re invited to '+site.name+' on Insights',content:[{type:'text/plain',value:text},{type:'text/html',value:html}]})});
- if(!r.ok)throw new Error('The invitation is saved, but the email failed: '+(await r.text()).slice(0,200));
+ try{await sendMail({to:email,subject:'You\'re invited to '+site.name+' on Insights',text,html,reply_to:inviter.email||''});}
+ catch(e:any){throw new Error('The invitation is saved, but the email failed: '+String(e?.message||e).slice(0,200));}
  return {user_id:link.user?.id||null,new_login:isNew};
 }
 
